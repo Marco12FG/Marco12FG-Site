@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snake - Marco12FG Edition</title>
+
+<style>
+body{
+    margin:0;
+    background:#0a0f14;
+    font-family:Arial, sans-serif;
+    color:white;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    min-height:100vh;
+}
+
+h1{
+    color:#00ff9c;
+    text-shadow:0 0 15px #00ff9c55;
+}
+
+canvas{
+    background:black;
+    box-shadow:0 0 40px #00ff9c33;
+    border-radius:10px;
+}
+
+.panel{
+    margin-top:10px;
+    background:#111a;
+    padding:10px;
+    border-radius:8px;
+    font-size:14px;
+}
+
+button{
+    margin-top:6px;
+    padding:6px 12px;
+    background:#00ff9c22;
+    border:none;
+    color:#00ff9c;
+    border-radius:6px;
+    cursor:pointer;
+}
+
+button:hover{
+    background:#00ff9c44;
+}
+
+select, input{
+    margin-left:6px;
+}
+
+.info{
+    margin-top:8px;
+}
+</style>
+</head>
+
+<body>
+
+<h1>🐍 Snake - Marco12FG Edition</h1>
+
+<canvas id="game" width="600" height="600"></canvas>
+
+<div class="info">
+Score: <span id="score">0</span> |
+Record: <span id="highscore">0</span>
+</div>
+
+<div class="panel">
+Velocità:
+<input type="range" id="speedRange" min="4" max="20" value="8">
+<span id="speedValue">8</span>
+<br><br>
+
+Pareti:
+<input type="checkbox" id="wallsToggle" checked>
+<br><br>
+
+Tema:
+<select id="themeSelect">
+<option value="#00ff9c">Neon Verde</option>
+<option value="#00e1ff">Cyan</option>
+<option value="#ff4dd2">Magenta</option>
+<option value="#ffffff">Bianco</option>
+</select>
+<br><br>
+
+Suoni:
+<input type="checkbox" id="soundToggle" checked>
+<br><br>
+
+<button onclick="startGame()">Nuova Partita</button>
+</div>
+
+<div class="info">Frecce / WASD - SPAZIO pausa</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const gridSize = 20;
+const tileCount = canvas.width / gridSize;
+
+let snake, direction, nextDirection, apple;
+let score = 0;
+let highscore = localStorage.getItem("snakeHighscore") || 0;
+let interval;
+let speed = 8;
+let walls = true;
+let themeColor = "#00ff9c";
+let soundOn = true;
+let paused = false;
+
+document.getElementById("highscore").innerText = highscore;
+
+function startGame(){
+    snake = [{x:10,y:10},{x:9,y:10},{x:8,y:10}];
+    direction = {x:1,y:0};
+    nextDirection = direction;
+    score = 0;
+    paused = false;
+    placeApple();
+    document.getElementById("score").innerText = score;
+    clearInterval(interval);
+    interval = setInterval(gameLoop, 1000/speed);
+}
+
+function placeApple(){
+    apple = {
+        x: Math.floor(Math.random()*tileCount),
+        y: Math.floor(Math.random()*tileCount)
+    };
+}
+
+function gameLoop(){
+    if(paused) return;
+
+    direction = nextDirection;
+
+    let head = {
+        x: snake[0].x + direction.x,
+        y: snake[0].y + direction.y
+    };
+
+    if(walls){
+        if(head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount){
+            return gameOver();
+        }
+    } else {
+        if(head.x < 0) head.x = tileCount-1;
+        if(head.x >= tileCount) head.x = 0;
+        if(head.y < 0) head.y = tileCount-1;
+        if(head.y >= tileCount) head.y = 0;
+    }
+
+    for(let part of snake){
+        if(part.x === head.x && part.y === head.y){
+            return gameOver();
+        }
+    }
+
+    snake.unshift(head);
+
+    if(head.x === apple.x && head.y === apple.y){
+        score++;
+        document.getElementById("score").innerText = score;
+        placeApple();
+        if(soundOn) beep();
+    } else {
+        snake.pop();
+    }
+
+    draw();
+}
+
+function draw(){
+    ctx.fillStyle="#000";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    ctx.fillStyle="red";
+    ctx.fillRect(apple.x*gridSize, apple.y*gridSize, gridSize-2, gridSize-2);
+
+    for(let i=0;i<snake.length;i++){
+        ctx.fillStyle = i===0 ? themeColor : shadeColor(themeColor,-40);
+        ctx.fillRect(snake[i].x*gridSize, snake[i].y*gridSize, gridSize-2, gridSize-2);
+    }
+}
+
+function gameOver(){
+    clearInterval(interval);
+    if(score > highscore){
+        highscore = score;
+        localStorage.setItem("snakeHighscore", highscore);
+        document.getElementById("highscore").innerText = highscore;
+    }
+    alert("Game Over! Score: "+score);
+}
+
+function shadeColor(color, percent){
+    let num = parseInt(color.slice(1),16);
+    let r = (num >> 16) + percent;
+    let g = ((num >> 8) & 0x00FF) + percent;
+    let b = (num & 0x0000FF) + percent;
+    r = Math.min(255, Math.max(0,r));
+    g = Math.min(255, Math.max(0,g));
+    b = Math.min(255, Math.max(0,b));
+    return "#" + (r<<16 | g<<8 | b).toString(16).padStart(6,"0");
+}
+
+function beep(){
+    const audio = new (window.AudioContext||window.webkitAudioContext)();
+    const osc = audio.createOscillator();
+    osc.type="square";
+    osc.frequency.value=600;
+    osc.connect(audio.destination);
+    osc.start();
+    osc.stop(audio.currentTime+0.1);
+}
+
+document.addEventListener("keydown", e=>{
+    if(e.key===" ") paused=!paused;
+
+    const map={
+        ArrowUp:{x:0,y:-1},
+        ArrowDown:{x:0,y:1},
+        ArrowLeft:{x:-1,y:0},
+        ArrowRight:{x:1,y:0},
+        w:{x:0,y:-1},
+        s:{x:0,y:1},
+        a:{x:-1,y:0},
+        d:{x:1,y:0}
+    };
+
+    if(map[e.key]){
+        let newDir=map[e.key];
+        if(newDir.x !== -direction.x || newDir.y !== -direction.y){
+            nextDirection=newDir;
+        }
+    }
+});
+
+document.getElementById("speedRange").oninput=function(){
+    speed=this.value;
+    document.getElementById("speedValue").innerText=speed;
+    if(interval){
+        clearInterval(interval);
+        interval=setInterval(gameLoop,1000/speed);
+    }
+};
+
+document.getElementById("wallsToggle").onchange=function(){
+    walls=this.checked;
+};
+
+document.getElementById("themeSelect").onchange=function(){
+    themeColor=this.value;
+};
+
+document.getElementById("soundToggle").onchange=function(){
+    soundOn=this.checked;
+};
+
+startGame();
+</script>
+
+</body>
+</html>
