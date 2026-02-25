@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<title>Zombie FPS 2D - Prototype</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root{
+    --ui-bg: rgba(0,0,0,0.6);
+    --accent: #2ecc71;
+    --danger: #e74c3c;
+    --mono: "Courier New", monospace;
+  }
+  html,body{height:100%; margin:0; font-family:Arial,Helvetica,sans-serif; background:#0b0b0b; color:#eee}
+  canvas{display:block; background: linear-gradient(#87ceeb, #6fbf73); width:100vw; height:100vh;}
+  #menu {
+    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,0.7); z-index:30; flex-direction:column; gap:12px;
+  }
+  .menu-box{background:var(--ui-bg); padding:18px; border-radius:10px; min-width:300px; text-align:center;}
+  .menu-row{display:flex; gap:8px; align-items:center; justify-content:center; margin:6px 0;}
+  input[type=range]{width:100%}
+  button{padding:10px 16px; border-radius:8px; border:0; cursor:pointer; background:#1f6feb; color:#fff}
+  button.alt{background:#555}
+  #hud{position:fixed; inset:0; pointer-events:none; z-index:20}
+  .hud-box{pointer-events:none; position:absolute; background:var(--ui-bg); padding:8px 10px; border-radius:8px; font-weight:700}
+  #hpHud{left:12px; bottom:12px}
+  #ammoHud{right:12px; bottom:12px}
+  #timerHud{left:12px; top:12px}
+  #infoHud{right:12px; top:12px; text-align:right}
+  #log{position:fixed; left:50%; transform:translateX(-50%); bottom:80px; background:rgba(0,0,0,0.5); padding:6px 10px; border-radius:6px; font-family:var(--mono); pointer-events:none}
+  .small{font-size:12px; opacity:0.9}
+</style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="menu">
+    <div class="menu-box">
+      <h1>Zombie FPS 2D — Prototype</h1>
+      <div style="margin:8px 0">Sali, barrica, sopravvivi. 👊</div>
+      <div class="menu-row">
+        <button id="playBtn">Gioca</button>
+        <button id="exitBtn" class="alt">Esci</button>
+      </div>
+
+      <hr style="opacity:0.15">
+
+      <div style="text-align:left; margin-top:8px"><strong>Impostazioni audio</strong></div>
+      <div style="margin:8px 0" class="small">Volume totale</div>
+      <input id="volTotal" type="range" min="0" max="1" step="0.01" value="1">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px">
+        <div>
+          <div class="small">Volume zombie</div>
+          <input id="volZombie" type="range" min="0" max="1" step="0.01" value="1">
+        </div>
+        <div>
+          <div class="small">Volume armi</div>
+          <input id="volGun" type="range" min="0" max="1" step="0.01" value="1">
+        </div>
+        <div>
+          <div class="small">Volume special</div>
+          <input id="volSpecial" type="range" min="0" max="1" step="0.01" value="1">
+        </div>
+        <div>
+          <div class="small">Volume passi</div>
+          <input id="volSteps" type="range" min="0" max="1" step="0.01" value="1">
+        </div>
+      </div>
+
+      <div style="margin-top:10px; font-size:12px; opacity:0.9">Controlli: W A S D - muovi · Mouse clic sinistro - spara · E - interagisci / scala · R - cassa munizioni · Esc - menu</div>
+    </div>
+  </div>
+
+  <div id="hud">
+    <div class="hud-box" id="hpHud">HP: 150 / 150</div>
+    <div class="hud-box" id="ammoHud">Fucile: 30</div>
+    <div class="hud-box" id="timerHud">☀ 60</div>
+    <div class="hud-box" id="infoHud">Casa: 1 · Obiettivo: 100 kill</div>
+  </div>
+
+  <div id="log" class="small"></div>
+
+<script>
+/* =========================
+  Prototipo Zombie FPS 2D
+  - Single-file, no assets
+  - Suoni generati via WebAudio
+  ========================= */
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+let W = canvas.width = innerWidth;
+let H = canvas.height = innerHeight;
+
+addEventListener("resize", ()=>{ W = canvas.width = innerWidth; H = canvas.height = innerHeight; });
+
+/* ---------- Audio manager (WebAudio) ---------- */
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const masterGain = audioCtx.createGain(); masterGain.connect(audioCtx.destination);
+const zombieGain = audioCtx.createGain(); zombieGain.connect(masterGain);
+const gunGain = audioCtx.createGain(); gunGain.connect(masterGain);
+const specialGain = audioCtx.createGain(); specialGain.connect(masterGain);
+const stepsGain = audioCtx.createGain(); stepsGain.connect(masterGain);
+
+function setVolumes(total=1, z=1, g=1, s=1, st=1){
+  masterGain.gain.value = total;
+  zombieGain.gain.value = z;
+  gunGain.gain.value = g;
+  specialGain.gain.value = s;
+  stepsGain.gain.value = st;
+}
+// initial
+setVolumes(1,1,1,1,1);
+
+// short utility sounds
+function playGun(){
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = "square"; o.frequency.value = 900;
+  g.gain.value = 0.0001;
+  o.connect(g); g.connect(gunGain);
+  o.start();
+  g.gain.exponentialRampToValueAtTime(0.08, audioCtx.currentTime + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.25);
+  setTimeout(()=>{ o.stop(); }, 260);
+}
+function playZombieGroan(volume=1){
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = "sawtooth"; o.frequency.value = 120 + Math.random()*60;
+  g.gain.value = 0.0001; o.connect(g); g.connect(zombieGain);
+  o.start();
+  g.gain.exponentialRampToValueAtTime(0.06 * volume, audioCtx.currentTime + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.8);
+  setTimeout(()=> o.stop(), 850);
+}
+function playBarricadeHit(){
+  const b = audioCtx.createOscillator(), g=audioCtx.createGain();
+  b.type="triangle"; b.frequency.value=280; b.connect(g); g.connect(specialGain);
+  g.gain.value = 0.0001; b.start();
+  g.gain.exponentialRampToValueAtTime(0.06, audioCtx.currentTime + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.25);
+  setTimeout(()=> b.stop(), 260);
+}
+function playTeleport(){
+  const t1=audioCtx.createOscillator(), g=audioCtx.createGain();
+  t1.type="sine"; t1.frequency.value=900; t1.connect(g); g.connect(specialGain);
+  g.gain.value=0.0001; t1.start();
+  g.gain.exponentialRampToValueAtTime(0.08, audioCtx.currentTime+0.01);
+  t1.frequency.exponentialRampToValueAtTime(300, audioCtx.currentTime+0.3);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime+0.45);
+  setTimeout(()=> t1.stop(), 480);
+}
+function playStep(){
+  const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+  o.type="square"; o.frequency.value=240; o.connect(g); g.connect(stepsGain);
+  g.gain.value=0.0001; o.start();
+  g.gain.exponentialRampToValueAtTime(0.02, audioCtx.currentTime+0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime+0.08);
+  setTimeout(()=> o.stop(), 120);
+}
+
+/* ---------- Game state ---------- */
+let running = false;
+let lastTime = 0;
+let dtAccum = 0;
+
+const player = {
+  x: W/2, y: H/2, r: 14, speed: 160, vx:0, vy:0,
+  hp:150, maxHp:150, ammo:30, maxAmmo:30,
+  carryingWood: 0,
+  upstairs:false
+};
+
+let mouse = {x:0,y:0, down:false};
+
+let keys = {};
+addEventListener("keydown", e=>{ keys[e.key.toLowerCase()] = true; if(e.key==='Escape') toggleMenu(); });
+addEventListener("keyup", e=>{ keys[e.key.toLowerCase()] = false; });
+canvas.addEventListener("mousemove", e=>{ const rect=canvas.getBoundingClientRect(); mouse.x=e.clientX-rect.left; mouse.y=e.clientY-rect.top; });
+canvas.addEventListener("mousedown", e=>{ mouse.down=true; });
+canvas.addEventListener("mouseup", e=>{ mouse.down=false; });
+
+/* ---------- World: houses, doors, items ---------- */
+let houseIndex = 0;
+let objective = 100;
+const houses = []; // each house has doors[], ammoCrate, ladder, pad
+function createHouse(i){
+  // house interior rectangle centered
+  const w = Math.min(900, W-120), h = Math.min(520, H-150);
+  const x = (W - w)/2, y = (H - h)/2;
+  // doors: top wall positions (3 or 4)
+  const doorCount = 3 + Math.floor(i/1); // increases slowly
+  const doors = [];
+  for(let d=0; d<Math.min(4, doorCount); d++){
+    const dx = x + 80 + d * ((w-160)/Math.max(1,doorCount-1));
+    doors.push({x:dx, y:y+8, w:60, h:10, barricadeHP:0, barricaded:false});
+  }
+  // ammo crate
+  const crate = {x:x + 60, y: y + h - 80, cooldown:0};
+  // ladder to upstairs
+  const ladder = {x:x + w - 80, y: y + h - 120, w:24, h:64};
+  // pad upstairs location (we manage upstairs coords relative)
+  const pad = {x:x + w/2, y:y + 80, r:28};
+  return {x,y,w,h,doors,crate,ladder,pad,styleSeed:i};
+}
+for(let i=0;i<8;i++) houses.push(createHouse(i));
+
+let woodItems = []; // {x,y,spawnAt}
+let lastWoodSpawn = 0;
+const woodSpawnInterval = 5000; // ms
+
+let bullets = [];
+let zombies = [];
+let lastZombieSpawn = 0;
+let zombieSpawnInterval = 1400; // ms (adjusts with house)
+
+// day/night
+let isDay = true;
+let dayTimeLeft = 16000; // ms (3 minutes)
+let nightTimeLeft = 420000; // ms (7 minutes)
+let cycleTimer = dayTimeLeft;
+let lastCycleTime = performance.now();
+let weather = "clear"; // "clear" or "rain"
+
+/* ---------- UI elements ---------- */
+const hpHud = document.getElementById("hpHud");
+const ammoHud = document.getElementById("ammoHud");
+const timerHud = document.getElementById("timerHud");
+const infoHud = document.getElementById("infoHud");
+const log = document.getElementById("log");
+
+/* ---------- Helpers ---------- */
+function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
+function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+function circleRectCollision(cx,cy,r, rx,ry,rw,rh){
+  const nearestX = clamp(cx, rx, rx+rw);
+  const nearestY = clamp(cy, ry, ry+rh);
+  const dx = cx - nearestX, dy = cy - nearestY;
+  return (dx*dx + dy*dy) < r*r;
+}
+
+/* ---------- Gameplay mechanics ---------- */
+
+function spawnWood(){
+  // spawn somewhere on floor inside current house
+  const h = houses[houseIndex];
+  const x = h.x + 60 + Math.random()*(h.w-120);
+  const y = h.y + 60 + Math.random()*(h.h-120);
+  woodItems.push({x,y, picked:false});
+}
+
+function spawnZombie(){
+  // only at night
+  if(isDay) return;
+  const h = houses[houseIndex];
+  // spawn at random edge near house
+  const edge = Math.random();
+  let x,y;
+  if(edge<0.25){ x = h.x + Math.random()*h.w; y = h.y - 40; }
+  else if(edge<0.5){ x = h.x + h.w + 40; y = h.y + Math.random()*h.h; }
+  else if(edge<0.75){ x = h.x + Math.random()*h.w; y = h.y + h.h + 40; }
+  else { x = h.x - 40; y = h.y + Math.random()*h.h; }
+  const speed = 35 + Math.random()*20 + houseIndex*4;
+  const hp = 10 + houseIndex*5;
+  zombies.push({x,y,r:14,speed,hp,maxHp:hp, target:"player", attackTimer:0});
+  playZombieGroan(0.5);
+}
+
+/* player shoot */
+function shootBullet(){
+  if(player.ammo<=0) return;
+  player.ammo--;
+  playGun();
+  // direction from player to mouse
+  const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  const speed = 900;
+  bullets.push({
+    x: player.x + Math.cos(ang)*(player.r+6),
+    y: player.y + Math.sin(ang)*(player.r+6),
+    vx: Math.cos(ang)*speed, vy: Math.sin(ang)*speed,
+    life: 1200
+  });
+}
+
+/* zombies AI */
+function updateZombies(dt){
+  const h = houses[houseIndex];
+  for(let z of zombies){
+    // decide target: if any barricade in top is barricaded and alive, target door; else player
+    let nearestDoor = null;
+    let ndist = 1e9;
+    for(let d of h.doors){
+      if(d.barricaded && d.barricadeHP>0){
+        const dx = z.x - (d.x + d.w/2), dy = z.y - (d.y + 40);
+        const dd = Math.hypot(dx,dy);
+        if(dd < ndist){ ndist = dd; nearestDoor = d; }
+      }
+    }
+    let tx = player.x, ty = player.y, tIsDoor=false, doorTarget=null;
+    if(nearestDoor && ndist < 350){
+      // go to door
+      tx = nearestDoor.x + nearestDoor.w/2;
+      ty = nearestDoor.y + 24;
+      tIsDoor = true; doorTarget = nearestDoor;
+    }
+    // move towards target
+    const dx = tx - z.x, dy = ty - z.y;
+    const ang = Math.atan2(dy,dx);
+    z.x += Math.cos(ang) * z.speed * dt;
+    z.y += Math.sin(ang) * z.speed * dt;
+    // attack if close
+    const pd = Math.hypot(player.x - z.x, player.y - z.y);
+    if(pd < player.r + z.r + 6){
+      // damage player every 0.6s
+      z.attackTimer += dt*1000;
+      if(z.attackTimer >= 600){
+        z.attackTimer = 0;
+        player.hp -= 6 + Math.floor(houseIndex/2);
+        playZombieGroan(0.6);
+        if(player.hp<=0){ player.hp=0; running=false; showLog("Sei morto — ricarica la pagina per riprovare"); }
+      }
+    } else {
+      z.attackTimer = Math.min(z.attackTimer, 600);
+    }
+    // if near barricade, damage it slowly (each hit 1 damage per attack tick)
+    if(tIsDoor && doorTarget){
+      const ddist2 = Math.hypot(z.x - (doorTarget.x + doorTarget.w/2), z.y - (doorTarget.y + 24));
+      if(ddist2 < 26){
+        z.attackTimer += dt*1000;
+        if(z.attackTimer >= 80){ // faster hitting frequency for "500 hits required" feel
+          z.attackTimer = 0;
+          doorTarget.barricadeHP -= 1;
+          if(Math.random()<0.02) playBarricadeHit();
+          if(doorTarget.barricadeHP <= 0){
+            doorTarget.barricaded = false;
+            doorTarget.barricadeHP = 0;
+            playZombieGroan(0.8);
+          }
+        }
+      }
+    }
+  }
+}
+
+/* bullets collisions */
+function updateBullets(dt){
+  for(let i=bullets.length-1;i>=0;i--){
+    const b = bullets[i];
+    b.life -= dt*1000;
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    // check collide with zombies
+    let hit=false;
+    for(let j=zombies.length-1;j>=0;j--){
+      const z = zombies[j];
+      const dx = b.x - z.x, dy = b.y - z.y;
+      if(dx*dx + dy*dy < (z.r+3)*(z.r+3)){
+        z.hp -= 12 + Math.floor(houseIndex/2*2);
+        hit=true;
+        if(z.hp <= 0){
+          zombies.splice(j,1);
+          killCounter++;
+          // drop a small gib? ignore
+        }
+        break;
+      }
+    }
+    if(hit || b.life<=0 || b.x< -50 || b.x>W+50 || b.y<-50 || b.y>H+50){
+      bullets.splice(i,1);
+    }
+  }
+}
+
+/* pick/place wood and crate use, ladder */
+function processInteraction(){
+  const h = houses[houseIndex];
+  // if E pressed
+  if(keys['e'] && !ePressed){
+    ePressed = true;
+    // priority: pick wood if near and not carrying (or carry stack)
+    let foundWood = null;
+    for(let i=0;i<woodItems.length;i++){
+      const w = woodItems[i];
+      if(Math.hypot(player.x-w.x, player.y-w.y) < 28){
+        foundWood = i; break;
+      }
+    }
+    if(foundWood !== null){
+      player.carryingWood++;
+      woodItems.splice(foundWood,1);
+      showLog("Hai raccolto legno. ("+player.carryingWood+")");
+      return;
+    }
+    // place wood on nearest door if carrying wood
+    if(player.carryingWood > 0){
+      for(let d of h.doors){
+        const dx = player.x - (d.x + d.w/2), dy = player.y - (d.y + 24);
+        if(Math.hypot(dx,dy) < 48){
+          // place: increase barricade
+          d.barricaded = true;
+          d.barricadeHP += 500; // each wood adds 500 hp
+          if(d.barricadeHP > 1500) d.barricadeHP = 1500;
+          player.carryingWood--;
+          playBarricadeHit();
+          showLog("Hai piazzato legno. Barricata HP: "+d.barricadeHP);
+          return;
+        }
+      }
+    }
+    // climb/descend ladder if near (upstairs only inside house)
+    if(!player.upstairs){
+      if(Math.hypot(player.x - (h.ladder.x + h.ladder.w/2), player.y - (h.ladder.y + h.ladder.h/2)) < 48 && !isDay){
+        player.upstairs = true;
+        showLog("Sei salito al piano superiore.");
+        return;
+      } else if(Math.hypot(player.x - (h.ladder.x + h.ladder.w/2), player.y - (h.ladder.y + h.ladder.h/2)) < 48 && isDay){
+        showLog("Non puoi salire di giorno.");
+        return;
+      }
+    } else {
+      // if upstairs and near ladder, go down
+      if(Math.hypot(player.x - (h.ladder.x + h.ladder.w/2), player.y - (h.ladder.y + h.ladder.h/2)) < 48){
+        player.upstairs = false;
+        showLog("Sei sceso al piano di sotto.");
+        return;
+      }
+    }
+  }
+  if(!keys['e']) ePressed = false;
+
+  // crate use R
+  if(keys['r'] && !rPressed){
+    rPressed=true;
+    const c = h.crate;
+    if(Math.hypot(player.x - c.x, player.y - c.y) < 36){
+      const now = performance.now();
+      if(c.cooldown <= 0){
+        player.ammo = player.maxAmmo;
+        c.cooldown = 10000;
+        showLog("Cassa ricaricata. Ammo: "+player.ammo);
+      } else {
+        showLog("Cassa non pronta: "+Math.ceil(c.cooldown/1000)+"s");
+      }
+    } else {
+      showLog("Non sei vicino alla cassa.");
+    }
+  }
+  if(!keys['r']) rPressed=false;
+}
+
+/* pad interaction (upstairs) */
+let killCounter = 0;
+function checkPadAndTeleport(){
+  const h = houses[houseIndex];
+  if(player.upstairs){
+    const p = h.pad;
+    const dx = player.x - p.x, dy = player.y - p.y;
+    if(Math.hypot(dx,dy) < p.r + player.r + 6){
+      // draw hover indicator and if click: attempt teleport
+      if(mouse.down && !mouseUsed){
+        mouseUsed = true;
+        if(killCounter >= objective){
+          // teleport to next house
+          playTeleport();
+          houseIndex = Math.min(houseIndex+1, houses.length-1);
+          objective += 100; // increase objective for next house (100 → 200 → 300 ...)
+          // reset things
+          zombies = [];
+          bullets = [];
+          woodItems = [];
+          player.upstairs = false;
+          killCounter = 0;
+          showLog("Teletrasportato alla casa " + (houseIndex+1) + ". Nuovo obiettivo: " + objective + " kill");
+        } else {
+          showLog("Pedana disattivata. Kill: "+killCounter+"/"+objective);
+        }
+      }
+      if(!mouse.down) mouseUsed = false;
+    }
+  }
+}
+
+/* ---------- Timers and spawn handling ---------- */
+function updateTimers(dt){
+  // wood spawn
+  lastWoodSpawn += dt*1000;
+  if(lastWoodSpawn >= woodSpawnInterval){
+    lastWoodSpawn = 0;
+    spawnWood();
+  }
+  // ammo crate cooldown
+  const c = houses[houseIndex].crate;
+  if(c.cooldown > 0) c.cooldown -= dt*1000;
+
+  // zombie spawns during night
+  lastZombieSpawn += dt*1000;
+  const spawnInterval = Math.max(350, zombieSpawnInterval - houseIndex*60);
+  if(!isDay && lastZombieSpawn >= spawnInterval){
+    lastZombieSpawn = 0;
+    spawnZombie();
+  }
+
+  // day/night cycle
+  const now = performance.now();
+  const elapsed = dt*1000;
+  cycleTimer -= elapsed;
+  if(isDay){
+    timerHud.innerText = "☀ " + Math.ceil(cycleTimer/1000) + "s";
+    if(cycleTimer <= 0){
+      // switch to night
+      isDay = false;
+      cycleTimer = nightTimeLeft;
+      weather = (Math.random()<0.35) ? "rain" : "clear";
+      showLog("È notte. Spawning zombie...");
+    }
+  } else {
+    timerHud.innerText = "☾ " + Math.ceil(cycleTimer/1000) + "s";
+    if(cycleTimer <= 0){
+      // switch to day
+      isDay = true;
+      cycleTimer = dayTimeLeft;
+      // clear zombies
+      zombies = [];
+      weather = (Math.random()<0.3) ? "rain" : "clear";
+      showLog("È giorno. Gli zombie scompaiono, puoi esplorare la città.");
+    }
+  }
+}
+
+/* ---------- Main update loop ---------- */
+let ePressed=false, rPressed=false, mouseUsed=false;
+function update(t){
+  if(!running){ lastTime = t; requestAnimationFrame(update); return; }
+  const dt = Math.min(0.05, (t - lastTime)/1000);
+  lastTime = t;
+
+  // player movement
+  let moveX=0, moveY=0;
+  if(keys['w']) moveY -= 1;
+  if(keys['s']) moveY += 1;
+  if(keys['a']) moveX -= 1;
+  if(keys['d']) moveX += 1;
+  const len = Math.hypot(moveX, moveY);
+  if(len>0){ moveX/=len; moveY/=len; player.x += moveX * player.speed * dt; player.y += moveY * player.speed * dt;
+    if(!player.movingPlayStep) { playStep(); player.movingPlayStep=true; }
+  } else { player.movingPlayStep=false; }
+  // bound to canvas
+  player.x = clamp(player.x, 12, W-12);
+  player.y = clamp(player.y, 12, H-12);
+
+  // shooting
+  if(mouse.down){
+    // simple fire rate control
+    if(!player.lastShot || performance.now() - player.lastShot > 140){
+      player.lastShot = performance.now();
+      shootBullet();
+    }
+  }
+
+  // bullets
+  updateBullets(dt);
+
+  // zombies
+  updateZombies(dt);
+
+  // interactions
+  processInteraction();
+  checkPadAndTeleport();
+
+  // timers & spawns
+  updateTimers(dt);
+
+  // HUD update
+  hpHud.innerText = "HP: " + Math.max(0,Math.floor(player.hp)) + " / " + player.maxHp;
+  ammoHud.innerText = "Fucile: " + player.ammo + " / " + player.maxAmmo;
+  infoHud.innerText = "Casa: " + (houseIndex+1) + " · Obiettivo: " + objective + " kill · Kill attuali: " + killCounter;
+
+  // draw
+  draw();
+
+  requestAnimationFrame(update);
+}
+
+/* ---------- Drawing ---------- */
+function draw(){
+  // background (sky)
+  if(isDay){
+    ctx.fillStyle = "#87ceeb";
+    ctx.fillRect(0,0,W,H);
+  } else {
+    ctx.fillStyle = "#060715";
+    ctx.fillRect(0,0,W,H);
+  }
+
+  // simple rain effect
+  if(weather === "rain"){
+    for(let i=0;i<200;i++){
+      ctx.fillStyle = "rgba(255,255,255,0.03)";
+      ctx.fillRect((i*37)%W, (i*71 + ((Date.now()/10)%H)), 2, 10);
+    }
+  }
+
+  // draw some distant city houses visible in day
+  for(let i=0;i<5;i++){
+    const hx = 80 + i*160; const hy = 80;
+    ctx.fillStyle = (i===houseIndex ? "#ffd27f" : "#cfcfcf");
+    ctx.fillRect(hx,hy,72,52);
+    ctx.fillStyle="#333"; ctx.fillRect(hx+8,hy+28,20,24);
+  }
+
+  const h = houses[houseIndex];
+
+  // house interior rectangle
+  ctx.save();
+  // if upstairs, only draw upstairs (we simulate upstairs by masking lower floor)
+  ctx.fillStyle = "#333";
+  ctx.fillRect(h.x, h.y, h.w, h.h);
+
+  // floor area lighter
+  ctx.fillStyle = "#2f2f2f"; ctx.fillRect(h.x+6, h.y+6, h.w-12, h.h-12);
+
+  // doors (top)
+  for(let d of h.doors){
+    ctx.fillStyle = "#553";
+    ctx.fillRect(d.x, d.y, d.w, d.h);
+    if(d.barricaded){
+      // draw barricade in front
+      const hpRatio = Math.max(0,d.barricadeHP/1500);
+      ctx.fillStyle = "#7b5a2a";
+      ctx.fillRect(d.x-6, d.y+6, d.w+12, 20);
+      // HP bar
+      ctx.fillStyle = "#111"; ctx.fillRect(d.x-6, d.y+30, d.w+12, 6);
+      ctx.fillStyle = "#2ecc71";
+      ctx.fillRect(d.x-6, d.y+30, (d.w+12) * hpRatio, 6);
+    }
+  }
+
+  // ammo crate
+  ctx.fillStyle = "#5b9"; ctx.fillRect(h.crate.x-14, h.crate.y-12, 28, 20);
+  ctx.fillStyle = "#062"; ctx.fillRect(h.crate.x-12, h.crate.y-10, 24, 16);
+  // crate cooldown indicator
+  if(h.crate.cooldown > 0){
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    const r = clamp(h.crate.cooldown/10000,0,1);
+    ctx.fillRect(h.crate.x-14, h.crate.y-32, 28*(1-r), 6);
+  }
+
+  // ladder
+  ctx.fillStyle = "#886"; ctx.fillRect(h.ladder.x, h.ladder.y, h.ladder.w, h.ladder.h);
+  // upstairs pad (draw only if upstairs)
+  if(player.upstairs){
+    ctx.fillStyle = "#222";
+    ctx.fillRect(h.x+10, h.y+10, h.w-20, h.h-20);
+    // pedana
+    const pad = h.pad;
+    // color by kill requirement
+    const active = (killCounter >= objective);
+    ctx.fillStyle = active ? "#2ecc71" : "#e74c3c";
+    ctx.beginPath(); ctx.arc(pad.x, pad.y, pad.r, 0, Math.PI*2); ctx.fill();
+    // label
+    ctx.fillStyle="#000"; ctx.font="14px Arial"; ctx.textAlign="center"; ctx.fillText(active ? "ATTIVA" : "INATTIVA", pad.x, pad.y+4);
+  }
+
+  // wood items
+  for(let w of woodItems){
+    ctx.fillStyle = "#c07a2a";
+    ctx.fillRect(w.x-8, w.y-6, 16, 8);
+  }
+
+  // bullets
+  ctx.fillStyle="#fff";
+  for(let b of bullets){ ctx.fillRect(b.x-3, b.y-3, 6,6); }
+
+  // zombies
+  for(let z of zombies){
+    // body
+    ctx.fillStyle = "#5b1f1f";
+    ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI*2); ctx.fill();
+    // hp bar
+    const ratio = Math.max(0,z.hp / z.maxHp);
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(z.x-16, z.y - z.r - 10, 32,6);
+    ctx.fillStyle = "#2ecc71"; ctx.fillRect(z.x-16, z.y - z.r - 10, 32*ratio,6);
+  }
+
+  // player
+  ctx.fillStyle = "#2d9cff";
+  ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, Math.PI*2); ctx.fill();
+  // gun direction cone
+  const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(player.x + Math.cos(ang)*26, player.y + Math.sin(ang)*26); ctx.stroke();
+
+  ctx.restore();
+
+  // overlay if upstairs (hide downstairs)
+  if(player.upstairs){
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(0,0,W,H);
+  }
+
+  // top-left small timer already handled in DOM; draw small crosshair
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(mouse.x-6, mouse.y-1, 12,2);
+  ctx.fillRect(mouse.x-1, mouse.y-6, 2,12);
+}
+
+/* ---------- UI & interactions ---------- */
+function showLog(t){
+  log.innerText = t;
+  log.style.opacity = 1;
+  setTimeout(()=>{ log.style.opacity = 0.45; }, 3000);
+}
+
+/* ---------- Menu controls ---------- */
+const menu = document.getElementById("menu");
+document.getElementById("playBtn").addEventListener("click", ()=>{
+  // resume audio ctx if needed
+  if(audioCtx.state === 'suspended') audioCtx.resume();
+  menu.style.display = "none";
+  if(!running){ startGame(); }
+});
+document.getElementById("exitBtn").addEventListener("click", ()=>{
+  // try to close or reload
+  menu.style.display = "none";
+  showLog("Uscita: ricarica la pagina se vuoi veramente chiudere.");
+});
+
+function toggleMenu(){ menu.style.display = (menu.style.display === "none" ? "flex" : "none"); }
+
+/* volume bindings */
+document.getElementById("volTotal").addEventListener("input", e=>{
+  setVolumes(parseFloat(e.target.value), zombieGain.gain.value, gunGain.gain.value, specialGain.gain.value, stepsGain.gain.value);
+});
+document.getElementById("volZombie").addEventListener("input", e=>{
+  zombieGain.gain.value = parseFloat(e.target.value);
+});
+document.getElementById("volGun").addEventListener("input", e=>{
+  gunGain.gain.value = parseFloat(e.target.value);
+});
+document.getElementById("volSpecial").addEventListener("input", e=>{
+  specialGain.gain.value = parseFloat(e.target.value);
+});
+document.getElementById("volSteps").addEventListener("input", e=>{
+  stepsGain.gain.value = parseFloat(e.target.value);
+});
+
+/* ---------- Start & init ---------- */
+function startGame(){
+  // reset
+  player.x = W/2; player.y = H/2; player.hp = player.maxHp; player.ammo = player.maxAmmo; player.carryingWood = 0;
+  houseIndex = 0; objective = 100; killCounter = 0;
+  woodItems = []; zombies = []; bullets = [];
+  lastWoodSpawn = 0; lastZombieSpawn = 0;
+  isDay = true; cycleTimer = dayTimeLeft;
+  running = true;
+  lastTime = performance.now();
+  requestAnimationFrame(update);
+  showLog("Gioco iniziato. Giorno in corso.");
+}
+
+// small helper: pick up wood automatically if very near and press E (handled above)
+
+// ensure audio unlock on first user gesture
+document.body.addEventListener('click', ()=>{ if(audioCtx.state === 'suspended') audioCtx.resume(); }, {once:true});
+
+requestAnimationFrame(update);
+</script>
+</body>
+</html>

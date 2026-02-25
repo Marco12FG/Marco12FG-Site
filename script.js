@@ -77,6 +77,27 @@ if(snakeBtn){
 
 }
 
+document.querySelectorAll("button[data-href]").forEach(btn=>{
+
+btn.addEventListener("click",e=>{
+
+const target=btn.getAttribute("data-href");
+if(!target) return;
+
+spawnParticles(e.clientX,e.clientY);
+
+body.classList.add("page-transition");
+
+setTimeout(()=>{
+window.location=target;
+},600);
+
+});
+
+});
+
+
+
 /* Page transition links */
 
 document.querySelectorAll("a").forEach(link=>{

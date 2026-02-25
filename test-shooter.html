@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Void Dungeon Ultra</title>
+
+<style>
+body{
+    margin:0;
+    background:#05050a;
+    color:white;
+    font-family:Segoe UI, Arial;
+    text-align:center;
+}
+
+h1{
+    color:#c94bff;
+    text-shadow:0 0 12px rgba(201,75,255,.5);
+    margin:8px;
+}
+
+canvas{
+    background:#0b0b10;
+    border:3px solid #1db954;
+    width:100%;
+    max-width:1000px;
+}
+
+button{
+    padding:8px 14px;
+    margin:6px;
+    border:none;
+    border-radius:6px;
+    background:#1db954;
+    font-weight:bold;
+    cursor:pointer;
+}
+</style>
+</head>
+
+<body>
+
+<h1>Void Dungeon Ultra</h1>
+
+<div>
+<span id="hp"></span>
+<span id="coins"></span>
+<span id="keys"></span>
+<span id="bombs"></span>
+</div>
+
+<canvas id="game" width="960" height="600"></canvas>
+
+<br>
+<button onclick="restartGame()">Restart</button>
+
+<script>
+
+/* ===== CANVAS ===== */
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+/* ===== UTILS ===== */
+
+function rand(a,b){ return Math.random()*(b-a)+a }
+function randInt(a,b){ return Math.floor(rand(a,b+1)) }
+function dist(x1,y1,x2,y2){ return Math.hypot(x2-x1,y2-y1) }
+
+/* ===== INPUT ===== */
+
+const input={keys:{},mouse:{x:0,y:0,down:false}}
+
+window.addEventListener("keydown",e=>{
+    input.keys[e.key.toLowerCase()]=true;
+});
+
+window.addEventListener("keyup",e=>{
+    input.keys[e.key.toLowerCase()]=false;
+});
+
+canvas.addEventListener("mousemove",e=>{
+    let r=canvas.getBoundingClientRect();
+    input.mouse.x=(e.clientX-r.left)*(canvas.width/r.width);
+    input.mouse.y=(e.clientY-r.top)*(canvas.height/r.height);
+});
+
+canvas.addEventListener("mousedown",()=>input.mouse.down=true);
+canvas.addEventListener("mouseup",()=>input.mouse.down=false);
+
+/* ===== PLAYER ===== */
+
+const Player={
+    x:480,y:300,r:12,
+    speed:3.6,
+    hp:12,maxHp:12,
+    damage:1.6,
+    fireRate:180,
+    lastShot:0,
+    coins:0,
+    keys:0,
+    bombs:2
+};
+
+/* ===== GAME DATA ===== */
+
+let enemies=[];
+let bullets=[];
+
+/* ===== ENEMY ===== */
+
+function spawnEnemy(){
+    enemies.push({
+        x:rand(150,810),
+        y:rand(120,480),
+        r:randInt(10,20),
+        hp:randInt(6,20),
+        speed:rand(0.8,1.8),
+        type:Math.random()<0.3?"big":"normal"
+    });
+}
+
+/* ===== SHOOT ===== */
+
+function shoot(){
+
+    let now=performance.now();
+    if(now-Player.lastShot<Player.fireRate) return;
+
+    Player.lastShot=now;
+
+    let dx=input.mouse.x-Player.x;
+    let dy=input.mouse.y-Player.y;
+
+    let m=Math.hypot(dx,dy)||1;
+
+    bullets.push({
+        x:Player.x,
+        y:Player.y,
+        vx:(dx/m)*8,
+        vy:(dy/m)*8,
+        life:1600
+    });
+}
+
+/* ===== UPDATE ===== */
+
+function update(dt){
+
+    let vx=0,vy=0;
+
+    if(input.keys["a"]) vx-=1;
+    if(input.keys["d"]) vx+=1;
+    if(input.keys["w"]) vy-=1;
+    if(input.keys["s"]) vy+=1;
+
+    if(vx||vy){
+        let m=Math.hypot(vx,vy)||1;
+        Player.x+=vx/m*Player.speed*dt*60;
+        Player.y+=vy/m*Player.speed*dt*60;
+    }
+
+    Player.x=Math.max(Player.r,Math.min(960-Player.r,Player.x));
+    Player.y=Math.max(Player.r,Math.min(600-Player.r,Player.y));
+
+    if(input.mouse.down) shoot();
+
+    /* bullets */
+    bullets.forEach(b=>{
+        b.x+=b.vx*dt*60;
+        b.y+=b.vy*dt*60;
+        b.life-=dt*1000;
+    });
+
+    bullets=bullets.filter(b=>b.life>0);
+
+    /* enemy AI */
+    enemies.forEach(e=>{
+
+        let dx=Player.x-e.x;
+        let dy=Player.y-e.y;
+        let d=Math.hypot(dx,dy)||1;
+
+        e.x+=dx/d*e.speed*dt*60;
+        e.y+=dy/d*e.speed*dt*60;
+
+        if(dist(Player.x,Player.y,e.x,e.y)<Player.r+e.r){
+            Player.hp-=0.03;
+        }
+    });
+
+    /* bullet collision */
+    bullets.forEach((b,bi)=>{
+        enemies.forEach((e,ei)=>{
+            if(dist(b.x,b.y,e.x,e.y)<e.r+6){
+                e.hp-=Player.damage;
+                bullets.splice(bi,1);
+
+                if(e.hp<=0){
+                    enemies.splice(ei,1);
+                    Player.coins++;
+                }
+            }
+        });
+    });
+
+    document.getElementById("hp").innerText="HP "+Player.hp.toFixed(1);
+    document.getElementById("coins").innerText=" Coins "+Player.coins;
+    document.getElementById("keys").innerText=" Keys "+Player.keys;
+    document.getElementById("bombs").innerText=" Bombs "+Player.bombs;
+}
+
+/* ===== RENDER ===== */
+
+function render(){
+
+    ctx.fillStyle="#07070f";
+    ctx.fillRect(0,0,960,600);
+
+    /* room */
+    ctx.fillStyle="#0f0f15";
+    ctx.fillRect(120,80,720,440);
+
+    /* enemies */
+    enemies.forEach(e=>{
+        ctx.fillStyle=e.type==="big"?"#ff8844":"#ff4444";
+        ctx.beginPath();
+        ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
+        ctx.fill();
+    });
+
+    /* bullets */
+    ctx.fillStyle="#ffe97a";
+    bullets.forEach(b=>{
+        ctx.beginPath();
+        ctx.arc(b.x,b.y,4,0,Math.PI*2);
+        ctx.fill();
+    });
+
+    /* player */
+    ctx.fillStyle="#c94bff";
+    ctx.beginPath();
+    ctx.arc(Player.x,Player.y,Player.r,0,Math.PI*2);
+    ctx.fill();
+}
+
+/* ===== LOOP ===== */
+
+let last=performance.now();
+
+function loop(t){
+    let dt=Math.min(0.033,(t-last)/1000);
+    last=t;
+
+    update(dt);
+    render();
+
+    requestAnimationFrame(loop);
+}
+
+/* ===== GAME START ===== */
+
+function restartGame(){
+    Player.hp=Player.maxHp;
+    Player.coins=0;
+    Player.keys=0;
+    Player.bombs=2;
+
+    enemies=[];
+    bullets=[];
+
+    for(let i=0;i<6;i++) spawnEnemy();
+}
+
+restartGame();
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
